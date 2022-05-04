@@ -1,0 +1,387 @@
+# This is a slightly modified/simplified version of the scripts in
+# https://github.com/istio/tools/tree/master/perf/benchmark
+# note that the port 8080 name was changed so istio wouldn't detect it as HTTP,
+# as we want to test mTLS latency without L7 parsing.
+
+# Source: benchmark/templates/fortio.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nighthawk-test-server-config
+data: # TODO(oschaaf): can we fold captured/uncaptured pods, and just have captured/uncaptured ports?
+  nighthawk-test-server-captured.yaml: |
+    admin:
+      access_log_path: /var/lib/fortio/nighthawk_test_server_admin_access_captured.log
+      profile_path: /var/lib/fortio/nighthawk_test_server_captured.prof
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 9080 }
+    static_resources:
+      listeners:
+      - address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8080
+        filter_chains:
+        - filters:
+          - name: envoy.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              generate_request_id: false
+              codec_type: auto
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: service
+                  domains:
+                  - "*"
+              http_filters:
+              - name: dynamic-delay
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+
+              - name: test-server
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+                  response_body_size: 10
+                  v3_response_headers:
+                    - { header: { key: "foo", value: "bar" } }
+                    - {
+                        header: { key: "foo", value: "bar2" },
+                        append: true,
+                      }
+                    - { header: { key: "x-nh", value: "1" } }
+
+              # - name: test-server
+              #   config:
+              #     response_body_size: 1024
+              #     response_headers:
+              #     - { header: { key: "x-nighthawk", value: "captured"}}
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  dynamic_stats: false
+
+      - address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8082
+        filter_chains:
+        - filters:
+          - name: envoy.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              generate_request_id: false
+              codec_type: auto
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: service
+                  domains:
+                  - "*"
+              http_filters:
+              - name: dynamic-delay
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+
+              - name: test-server
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+                  response_body_size: 10
+                  v3_response_headers:
+                    - { header: { key: "foo", value: "bar" } }
+                    - {
+                        header: { key: "foo", value: "bar2" },
+                        append: true,
+                      }
+                    - { header: { key: "x-nh", value: "1" } }
+
+              # - name: test-server
+              #   config:
+              #     response_body_size: 1024
+              #     response_headers:
+              #     - { header: { key: "x-nighthawk", value: "captured"}}
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  dynamic_stats: false
+
+  nighthawk-test-server-uncaptured.yaml: |
+    admin:
+      access_log_path: /var/lib/fortio/nighthawk_test_server_admin_access_uncaptured.log
+      profile_path: /var/lib/fortio/nighthawk_test_server_uncaptured.prof
+      address:
+        socket_address: { address: 0.0.0.0, port_value: 9078 }
+    static_resources:
+      listeners:
+      - address:
+          socket_address:
+            address: 0.0.0.0
+            port_value: 8077
+        filter_chains:
+        - filters:
+          - name: envoy.http_connection_manager
+            typed_config:
+              "@type": type.googleapis.com/envoy.extensions.filters.network.http_connection_manager.v3.HttpConnectionManager
+              generate_request_id: false
+              codec_type: auto
+              stat_prefix: ingress_http
+              route_config:
+                name: local_route
+                virtual_hosts:
+                - name: service
+                  domains:
+                  - "*"
+              http_filters:
+              - name: dynamic-delay
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+
+              - name: test-server
+                typed_config:
+                  "@type": type.googleapis.com/nighthawk.server.ResponseOptions
+                  response_body_size: 10
+                  v3_response_headers:
+                    - { header: { key: "foo", value: "bar" } }
+                    - {
+                        header: { key: "foo", value: "bar2" },
+                        append: true,
+                      }
+                    - { header: { key: "x-nh", value: "1" } }
+
+              # - name: test-server
+              #   config:
+              #     response_body_size: 1024
+              #     response_headers:
+              #     - { header: { key: "x-nighthawk", value: "uncaptured"}}
+              - name: envoy.filters.http.router
+                typed_config:
+                  "@type": type.googleapis.com/envoy.extensions.filters.http.router.v3.Router
+                  dynamic_stats: false
+
+---
+# Source: benchmark/templates/fortio.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: fortioserver
+spec:
+  ports:
+  - name: not-http-echo
+    port: 8080
+    protocol: TCP
+  - name: not-http-echo2
+    port: 8082
+    protocol: TCP
+  - name: http-echoa
+    port: 8077
+  selector:
+    app: fortioserver
+---
+# Source: benchmark/templates/fortio.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: fortioclient
+spec:
+  ports:
+  - name: not-http-echo
+    port: 8080
+    protocol: TCP
+  - name: http-echoa
+    port: 8077
+    protocol: TCP
+  selector:
+    app: fortioclient
+  type: ClusterIP
+---
+# Source: benchmark/templates/fortio.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: fortioserver
+  name: fortioserver
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fortioserver
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/interceptionMode: REDIRECT
+        # exclude inbound ports of the uncaptured container
+        traffic.sidecar.istio.io/excludeInboundPorts: "8076,8077,8078,2,9999"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "80,8076,8077,8078, 2"
+        sidecar.istio.io/proxyCPU: 1000m
+        sidecar.istio.io/proxyMemory: 512Mi
+      labels:
+        app: fortioserver
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - "fortioclient"
+            topologyKey: "kubernetes.io/hostname"
+      volumes:
+      - name: shared-data
+        emptyDir: {}
+      - name: nighthawk-test-server-config
+        configMap:
+          name: nighthawk-test-server-config
+      containers:
+      - name: captured
+        securityContext:
+          runAsUser: 1
+        volumeMounts:
+        - name: shared-data
+          mountPath: /var/lib/fortio
+        - name: nighthawk-test-server-config
+          mountPath: /var/lib/nighthawk 
+        image: envoyproxy/nighthawk-dev:d3d6d3a60ce02ea9cf0466f16534f89fdd6a2c58
+        ports:
+        - containerPort: 8080
+          protocol: TCP
+        - containerPort: 8079
+          protocol: TCP
+        - containerPort: 8078
+          protocol: TCP
+        args:
+        - nighthawk_test_server
+        - -c
+        - /var/lib/nighthawk/nighthawk-test-server-captured.yaml
+        - --base-id
+        - "1"
+        resources:
+          requests:
+            cpu: 1500m
+            memory: 1000Mi
+      - name: shell
+        securityContext:
+          runAsUser: 1
+        volumeMounts:
+        - name: shared-data
+          mountPath: /var/lib/fortio
+        - name: nighthawk-test-server-config
+          mountPath: /var/lib/nighthawk
+        image: cfmanteiga/alpine-bash-curl-jq:latest
+        args:
+        - /bin/sleep
+        - 3650d
+      - name: uncaptured
+        securityContext:
+          runAsUser: 1
+        image: envoyproxy/nighthawk-dev:d3d6d3a60ce02ea9cf0466f16534f89fdd6a2c58
+        ports:
+        - containerPort: 8077
+          protocol: TCP
+        - containerPort: 8076
+          protocol: TCP
+        volumeMounts:
+        - name: shared-data
+          mountPath: /var/lib/fortio
+        - name: nighthawk-test-server-config
+          mountPath: /var/lib/nighthawk 
+        args:
+        - nighthawk_test_server
+        - -c
+        - /var/lib/nighthawk/nighthawk-test-server-uncaptured.yaml
+        - --base-id
+        - "2"
+        resources:
+          requests:
+            cpu: 1500m
+            memory: 1000Mi
+---
+# Source: benchmark/templates/fortio.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: fortioclient
+  name: fortioclient
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fortioclient
+  template:
+    metadata:
+      annotations:
+        sidecar.istio.io/interceptionMode: REDIRECT
+        # exclude inbound ports of the uncaptured container
+        traffic.sidecar.istio.io/excludeInboundPorts: "8076,8077,8078,2,9999"
+        traffic.sidecar.istio.io/excludeOutboundPorts: "80,8076,8077,8078, 2"
+        sidecar.istio.io/proxyCPU: 1000m
+        sidecar.istio.io/proxyMemory: 512Mi
+      labels:
+        app: fortioclient
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - "fortioserver"
+            topologyKey: "kubernetes.io/hostname"
+      volumes:
+      - name: shared-data
+        emptyDir: {}
+      containers:
+      - name: captured
+        securityContext:
+          runAsUser: 1
+        volumeMounts:
+        - name: shared-data
+          mountPath: /var/lib/fortio
+        image: envoyproxy/nighthawk-dev:d3d6d3a60ce02ea9cf0466f16534f89fdd6a2c58
+        args:
+        - nighthawk_service
+        - --listen
+        - 0.0.0.0:9999
+        ports:
+        - containerPort: 9999
+          protocol: TCP
+        resources:
+          requests:
+            cpu: 1500m
+            memory: 1000Mi
+      - name: shell
+        securityContext:
+          runAsUser: 1
+        volumeMounts:
+        - name: shared-data
+          mountPath: /var/lib/fortio
+        image: cfmanteiga/alpine-bash-curl-jq:latest
+        args:
+        - /bin/sleep
+        - 3650d
+
+---
+# Source: benchmark/templates/mtls.yaml
+apiVersion: networking.istio.io/v1alpha3
+kind: DestinationRule
+metadata:
+  name: fortioserver
+spec:
+  host: fortioserver
+  trafficPolicy:
+    portLevelSettings:
+    - port:
+        number: 8080
+      tls:
+        mode: ISTIO_MUTUAL
+    - port:
+        number: 8082
+      tls:
+        mode: DISABLE
