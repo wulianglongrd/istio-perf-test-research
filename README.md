@@ -54,17 +54,17 @@ Note that config above turns on mTLS for port 8080.
 kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
-      http://fortioserver.testing.svc.cluster.local:8077/ | tee out-uncaptured-1.json
+      http://fortioserver.testing.svc.cluster.local:8077/ | tee out-uncaptured.json
 # mtls
 kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
-      http://fortioserver.testing.svc.cluster.local:8080/ | tee out-captured-mtls-1.json
+      http://fortioserver.testing.svc.cluster.local:8080/ | tee out-captured-mtls.json
 # sidecar, no mtls
 kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
-      http://fortioserver.testing.svc.cluster.local:8082/ | tee out-captured-1.json
+      http://fortioserver.testing.svc.cluster.local:8082/ | tee out-captured.json
 ```
 
 See the p95:
@@ -86,30 +86,6 @@ $ jq '.DurationHistogram.Percentiles[] | select(.Percentile == 95)' out-uncaptur
 See the report:
 ```shell
 fortio report
-```
-
-
-## test without wasm filter
-
-```
-kubectl delete envoyfilter -n istio-system tcp-stats-filter-1.13
-sleep 1
-# mtls
-kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format json \
-    --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
-    --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 100 \
-      http://fortioserver.testing.svc.cluster.local:8080/ | tee out-captured-no-stats.json
-```
-
-Results from my setup:
-```
-❯ jq '.results[].statistics[] | select(.id == "benchmark_http_client.request_to_response")|.percentiles[]|select(.percentile == 0.95)' out-captured-no-stats.json
-
-{
-  "percentile": 0.95,
-  "count": "379578",
-  "duration": "0.000898079s"
-}
 ```
 
 ## test with other parameters
