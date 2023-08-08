@@ -3,20 +3,12 @@
 This setup is a simplified version of the one in https://github.com/istio/tools/tree/master/perf/benchmark
 Geared towards more research and less for CI.
 
-Create 3 `n2-standard-16` node cluster:
-
-
-```sh
-# fill in GCLOUD_PROJECT, CLUSTER_NAME
-gcloud beta container --project $GCLOUD_PROJECT clusters create $CLUSTER_NAME --zone "us-central1-c" --no-enable-basic-auth --cluster-version "1.21.10-gke.2000" --release-channel "regular" --machine-type "n2-standard-16" --image-type "COS_CONTAINERD" --disk-type "pd-standard" --disk-size "100" --metadata disable-legacy-endpoints=true --scopes "https://www.googleapis.com/auth/devstorage.read_only","https://www.googleapis.com/auth/logging.write","https://www.googleapis.com/auth/monitoring","https://www.googleapis.com/auth/servicecontrol","https://www.googleapis.com/auth/service.management.readonly","https://www.googleapis.com/auth/trace.append" --max-pods-per-node "110" --num-nodes "3" --logging=SYSTEM,WORKLOAD --monitoring=SYSTEM --enable-ip-alias --network "projects/solo-test-236622/global/networks/default" --subnetwork "projects/solo-test-236622/regions/us-central1/subnetworks/default" --no-enable-intra-node-visibility --default-max-pods-per-node "110" --no-enable-master-authorized-networks --addons HorizontalPodAutoscaling,HttpLoadBalancing,GcePersistentDiskCsiDriver --enable-autoupgrade --enable-autorepair --max-surge-upgrade 1 --max-unavailable-upgrade 0 --enable-shielded-nodes --node-locations "us-central1-c"
+Create cluster use kind:
+```yaml
+kind create cluster --config kind-istio-basic.yaml
 ```
 
-Or for existing cluster:
-```sh
-gcloud container clusters get-credentials $CLUSTER_NAME --project $GCLOUD_PROJECT --zone us-central1-c
-```
-
-Install istio 1.13, Disable L7 auto detection:
+Install istio, Disable L7 auto detection:
 
 ```sh
 istioctl install -y -f - <<EOF
@@ -58,17 +50,18 @@ Note that config above turns on mTLS for port 8080.
 
 ```
 # baseline, no sidecar (port 8077 is excluded outbound..)
-kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format json \
+# https://github.com/envoyproxy/nighthawk#using-the-nighthawk-client-cli
+kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
       http://fortioserver.testing.svc.cluster.local:8077/ | tee out-uncaptured-1.json
 # mtls
-kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format json \
+kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
       http://fortioserver.testing.svc.cluster.local:8080/ | tee out-captured-mtls-1.json
 # sidecar, no mtls
-kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format json \
+kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_client --concurrency 1 --output-format fortio \
     --prefetch-connections --open-loop --experimental-h1-connection-reuse-strategy lru \
     --max-concurrent-streams 1 --connections 10 --rps 4000 --duration 60 \
       http://fortioserver.testing.svc.cluster.local:8082/ | tee out-captured-1.json
@@ -76,29 +69,25 @@ kubectl --namespace testing exec deploy/fortioclient -c captured -- nighthawk_cl
 
 See the p95:
 ```
-jq '.results[] | select(.name == "global") .statistics[] | select(.id == "benchmark_http_client.latency_2xx")|.percentiles[]|select(.percentile == 0.95)' out-uncaptured.json
-jq '.results[] | select(.name == "global") .statistics[] | select(.id == "benchmark_http_client.latency_2xx")|.percentiles[]|select(.percentile == 0.95)' out-captured-mtls.json
-jq '.results[] | select(.name == "global") .statistics[] | select(.id == "benchmark_http_client.latency_2xx")|.percentiles[]|select(.percentile == 0.95)' out-captured.json
+jq '.DurationHistogram.Percentiles[] | select(.Percentile == 95)' out-uncaptured.json
+jq '.DurationHistogram.Percentiles[] | select(.Percentile == 95)' out-captured-mtls.json
+jq '.DurationHistogram.Percentiles[] | select(.Percentile == 95)' out-captured.json
 ```
 
 Results from my setup:
 ```
-❯ jq '.results[].statistics[] | select(.id == "benchmark_http_client.latency_2xx")|.percentiles[]|select(.percentile == 0.95)' out-uncaptured.json
-
+$ jq '.DurationHistogram.Percentiles[] | select(.Percentile == 95)' out-uncaptured.json
 {
-  "percentile": 0.95,
-  "count": "379784",
-  "duration": "0.000533727s"
-}
-
-❯ jq '.results[].statistics[] | select(.id == "benchmark_http_client.latency_2xx")|.percentiles[]|select(.percentile == 0.95)' out-captured.json
-
-{
-  "percentile": 0.95,
-  "count": "379578",
-  "duration": "0.000953375s"
+  "Percentile": 95,
+  "Value": 0.000661855
 }
 ```
+
+See the report:
+```shell
+fortio report
+```
+
 
 ## test without wasm filter
 
